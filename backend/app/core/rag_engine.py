@@ -4,7 +4,11 @@ import pickle
 from typing import List, Tuple
 from sentence_transformers import SentenceTransformer
 from langchain.text_splitter import RecursiveCharacterTextSplitter
+from langchain_groq import ChatGroq
+from langchain_core.messages import HumanMessage, SystemMessage
+from dotenv import load_dotenv
 from PyPDF2 import PdfReader
+load_dotenv()
 
 
 
@@ -62,20 +66,25 @@ def retrieve_similar_chunks(query: str, top_k: int = 3):
     results = [chunks[i] for i in I[0]]
     return results
 
-from langchain.chat_models import ChatOpenAI
-from langchain.schema import HumanMessage, SystemMessage
+def answer_query(query: str, context_chunks: List[str]) -> str:
+    """Generate answer from Groq LLM using context."""
 
-# def answer_query(query: str, context_chunks: List[str]) -> str:
+    context = "\n\n".join(context_chunks)
+    prompt = f"Context:\n{context}\n\nQuestion: {query}\n\nAnswer clearly:"
 
-#     context = "\n\n".join(context_chunks)
-#     prompt = f"Context:\n{context}\n\nQuestion: {query}\n\nAnswer clearly:"
-#     llm = ChatOpenAI(model="gpt-3.5-turbo", temperature=0.2)
-#     messages = [
-#         SystemMessage(content="You are a helpful assistant answering based on context."),
-#         HumanMessage(content=prompt)
-#     ]
-#     response = llm(messages)
-#     return response.content
+    llm = ChatGroq(
+        model="mixtral-8x7b-32768",
+        temperature=0.1,
+    )
+
+    messages = [
+        SystemMessage(content="Answer only using the context. Be concise."),
+        HumanMessage(content=prompt)
+    ]
+
+    response = llm.invoke(messages)
+    return response.content
+
 
 
 def rag_pipeline(pdf_path: str):
