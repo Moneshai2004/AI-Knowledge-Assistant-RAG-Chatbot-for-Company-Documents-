@@ -13,7 +13,7 @@ async def upload_pdf(file: UploadFile = File(...)):
         with open(file_path, "wb") as f:
             f.write(await file.read())
 
-        create_rag_pipeline(file_path)
+        rag_pipeline(file_path)
 
         return {"status": "success", "message": f"{file.filename} processed successfully."}
     except Exception as e:
