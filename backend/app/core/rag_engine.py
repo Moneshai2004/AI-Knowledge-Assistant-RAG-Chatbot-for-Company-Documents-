@@ -67,25 +67,18 @@ def retrieve_similar_chunks(query: str, top_k: int = 3):
     return results
 
 def answer_query(query: str, context_chunks: List[str]) -> str:
-    """Generate answer from Groq LLM using context."""
 
     context = "\n\n".join(context_chunks)
     prompt = f"Context:\n{context}\n\nQuestion: {query}\n\nAnswer clearly:"
 
-    llm = ChatGroq(
-        model="mixtral-8x7b-32768",
-        temperature=0.1,
-    )
+    llm = ChatGroq(model="llama-3.3-70b-versatile",temperature=0.1)
 
     messages = [
         SystemMessage(content="Answer only using the context. Be concise."),
         HumanMessage(content=prompt)
     ]
-
     response = llm.invoke(messages)
     return response.content
-
-
 
 def rag_pipeline(pdf_path: str):
 
