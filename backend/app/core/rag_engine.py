@@ -1,99 +1,102 @@
+# backend/app/core/rag_engine.py
 """
-rag_engine.py
-Robust, low-RAM Hybrid RAG engine (FAISS + BM25) with metadata & provenance.
+RAG engine helpers.
 
-Usage:
-- build_index_from_pdf(pdf_path, doc_id)   # builds index and saves files in DATA_DIR
-- load_index_files()                       # loads FAISS + metadata + BM25 into memory
-- hybrid_search(query, top_k=5, alpha=0.6) # returns top chunks with provenance
-- build_context(chunks, limit=1500)        # returns context string suitable for prompt
-
-Files produced/loaded:
-- data/faiss.index
-- data/chunk_metadata.json
-- data/bm25_corpus.json
+Provides:
+- get_model(device)
+- PDF loading: load_pdf_pages(...)
+- Semantic-aware chunker: paragraph_split(...) and chunk_page_semantic(...)
+- Legacy file-based helpers (load/save FAISS, metadata)
+- Async DB-backed hybrid search: hybrid_search_db(...)
+- Context builder: build_context(...)
 """
 
 import os
 import json
 import re
-from typing import List, Dict, Tuple, Optional
+import unicodedata
+from typing import List, Dict, Optional
+from datetime import datetime
 
 import numpy as np
 import faiss
 
-# try fast PDF lib first
+# PDF libs - prefer PyMuPDF (fitz)
 try:
     import fitz  # PyMuPDF
     _HAS_FITZ = True
 except Exception:
     _HAS_FITZ = False
-    from PyPDF2 import PdfReader
+    try:
+        from PyPDF2 import PdfReader
+    except Exception:
+        PdfReader = None
 
 from rank_bm25 import BM25Okapi
 
-EMBED_MODEL_NAME = os.getenv("EMBED_MODEL_NAME", "BAAI/bge-base-en")
-
-# Data files
+# -------------------------
+# Config / paths
+# -------------------------
 DATA_DIR = os.getenv("RAG_DATA_DIR", "data")
 FAISS_INDEX_PATH = os.path.join(DATA_DIR, "faiss.index")
 METADATA_PATH = os.path.join(DATA_DIR, "chunk_metadata.json")
 BM25_CORPUS_PATH = os.path.join(DATA_DIR, "bm25_corpus.json")
-EMBED_DIM = int(os.getenv("EMBED_DIM", "768"))  # default for these MiniLM models
+EMBED_DIM = int(os.getenv("EMBED_DIM", "768"))
 
 os.makedirs(DATA_DIR, exist_ok=True)
 
-import re
-
-_token_cleanup_re = re.compile(r"\s+")
-_word_re = re.compile(r"[a-zA-Z0-9\-]+")
-
-def clean_and_tokenize(text: str) -> List[str]:
-    """
-    Clean noisy HR PDF text and return high-quality tokens for BM25.
-    """
-    text = text.lower()
-
-    # Fix broken words (remove weird spaces)
-    text = text.replace("comp ensation", "compensation")
-    text = text.replace("d ecisions", "decisions")
-    text = text.replace("abo ut", "about")
-    text = text.replace("forme rly", "formerly")
-    text = text.replace("inter nal", "internal")
-    text = text.replace("exter nal", "external")
-
-    # Remove extra whitespace
-    text = _token_cleanup_re.sub(" ", text)
-
-    # Extract clean tokens
-    tokens = _word_re.findall(text)
-
-    # Filter out meaningless tokens
-    tokens = [
-        t for t in tokens
-        if len(t) > 2 or t.isdigit()  # keep digits (CIN/address) but remove tiny garbage
-    ]
-
-    return tokens
-
+# -------------------------
+# Embedding model (lazy)
+# -------------------------
 _embed_model = None
 def get_model(device: Optional[str] = None):
     """
-    Lazy load the SentenceTransformer model. Optionally pass device='cuda' or 'cpu'.
-    Example: get_model('cuda')
+    Lazy-load sentence-transformers model (BAAI/bge-base-en by default).
+    Pass device='cuda' or 'cpu' if needed.
     """
     global _embed_model
     if _embed_model is None:
         from sentence_transformers import SentenceTransformer
+        EMBED_MODEL_NAME = os.getenv("EMBED_MODEL_NAME", "BAAI/bge-base-en")
         if device:
             _embed_model = SentenceTransformer(EMBED_MODEL_NAME, device=device)
         else:
             _embed_model = SentenceTransformer(EMBED_MODEL_NAME)
     return _embed_model
 
-# ------------------------
-# PDF loading utilities
-# ------------------------
+# -------------------------
+# Tokenization / cleaning
+# -------------------------
+_token_cleanup_re = re.compile(r"\s+")
+_word_re = re.compile(r"[a-zA-Z0-9\-]+")
+
+def clean_and_tokenize(text: str) -> List[str]:
+    """
+    Clean text heuristics and produce tokens for BM25.
+    """
+    if not text:
+        return []
+    text = text.lower()
+    # targeted fixes for broken PDFs
+    replacements = {
+        "comp ensation": "compensation",
+        "d ecisions": "decisions",
+        "abo ut": "about",
+        "forme rly": "formerly",
+        "inter nal": "internal",
+        "exter nal": "external",
+    }
+    for k, v in replacements.items():
+        text = text.replace(k, v)
+    text = _token_cleanup_re.sub(" ", text)
+    tokens = _word_re.findall(text)
+    # keep tokens with len > 2 or digits
+    tokens = [t for t in tokens if len(t) > 2 or t.isdigit()]
+    return tokens
+
+# -------------------------
+# PDF loading
+# -------------------------
 def load_pdf_pages(pdf_path: str) -> List[str]:
     """
     Return list of page texts. Uses PyMuPDF if available (faster), otherwise PyPDF2.
@@ -104,60 +107,139 @@ def load_pdf_pages(pdf_path: str) -> List[str]:
         doc.close()
         return pages
     else:
+        if PdfReader is None:
+            raise RuntimeError("No PDF backend available (install PyMuPDF or PyPDF2).")
         reader = PdfReader(pdf_path)
         pages = []
         for p in reader.pages:
             pages.append(p.extract_text() or "")
         return pages
 
-# ------------------------
-# Safe chunker (per page)
-# ------------------------
-# sensible defaults (tweakable)
+# -------------------------
+# Chunker helpers
+# -------------------------
 CHUNK_SIZE = int(os.getenv("RAG_CHUNK_SIZE", "1500"))
 CHUNK_OVERLAP = int(os.getenv("RAG_CHUNK_OVERLAP", "200"))
-MAX_PAGE_CHARS = int(os.getenv("RAG_MAX_PAGE_CHARS", "15000"))  # cap to avoid pathological pages
+MAX_PAGE_CHARS = int(os.getenv("RAG_MAX_PAGE_CHARS", "15000"))
 
-def chunk_page_safe(doc_id: str, page_no: int, text: str,
-                    chunk_size: int = CHUNK_SIZE,
-                    chunk_overlap: int = CHUNK_OVERLAP,
-                    max_page_chars: int = MAX_PAGE_CHARS) -> List[Dict]:
-    """
-    Chunk a single page into metadata dicts.
-    Ensures no infinite loops and truncates extremely large pages.
-    """
-    if not text:
-        return []
-    if len(text) > max_page_chars:
-        text = text[:max_page_chars]
+def _fix_hyphenation(text: str) -> str:
+    return re.sub(r'(\w)-\n(\w)', r'\1\2', text)
 
-    chunks = []
-    L = len(text)
+def _normalize_whitespace(text: str) -> str:
+    text = unicodedata.normalize("NFKC", text)
+    text = text.replace('\r', '\n')
+    text = re.sub(r'[\x00-\x09\x0b\x0c\x0e-\x1f]', ' ', text)
+    text = re.sub(r'[ \t]+', ' ', text)
+    text = re.sub(r'\n{3,}', '\n\n', text)
+    lines = [ln.strip() for ln in text.splitlines()]
+    return "\n".join(lines).strip()
+
+def _merge_wrapped_lines(text: str, min_line_len=40) -> str:
+    lines = text.splitlines()
+    merged = []
     i = 0
-    while i < L:
-        start = i
-        end = min(i + chunk_size, L)
-        chunk_text = text[start:end]
+    while i < len(lines):
+        line = lines[i].strip()
+        if not line:
+            merged.append('')
+            i += 1
+            continue
+        j = i + 1
+        nxt = lines[j].strip() if j < len(lines) else ''
+        is_heading = (len(line) < 80 and line.upper() == line and any(c.isalpha() for c in line)) or line.endswith(':')
+        if not nxt:
+            merged.append(line)
+            i += 1
+            continue
+        if (len(line) < min_line_len and nxt and (nxt[0].islower() or len(nxt) > min_line_len)) and not is_heading:
+            merged.append(line + ' ' + nxt)
+            i += 2
+            continue
+        merged.append(line)
+        i += 1
+    return "\n".join(merged)
 
+def paragraph_split(text: str) -> List[str]:
+    """
+    Split text into paragraphs, cleaning and merging wrapped lines.
+    """
+    text = _fix_hyphenation(text)
+    text = _normalize_whitespace(text)
+    text = _merge_wrapped_lines(text)
+    paras = [p.strip() for p in re.split(r'\n\s*\n', text) if p.strip()]
+    return paras
+
+def chunk_paragraphs_to_chunks(doc_id: str, page_no: int, paragraphs: List[str],
+                               chunk_size: int = CHUNK_SIZE, chunk_overlap: int = CHUNK_OVERLAP) -> List[Dict]:
+    """
+    Build chunks from paragraph list. Long paragraphs are windowed; short paras combined.
+    """
+    chunks = []
+    current = ""
+    cursor = 0
+    for para in paragraphs:
+        if len(para) >= chunk_size:
+            L = len(para)
+            i = 0
+            while i < L:
+                start = i
+                end = min(i + chunk_size, L)
+                chunk_text = para[start:end]
+                chunks.append({
+                    "doc_id": doc_id,
+                    "page": page_no,
+                    "start_char": cursor + start,
+                    "end_char": cursor + end,
+                    "text": chunk_text
+                })
+                i = end - chunk_overlap
+                if i <= start:
+                    break
+            cursor += L + 1
+            current = ""
+        else:
+            if len(current) + 1 + len(para) <= chunk_size:
+                if current:
+                    current += "\n\n" + para
+                else:
+                    current = para
+            else:
+                if current:
+                    chunks.append({
+                        "doc_id": doc_id,
+                        "page": page_no,
+                        "start_char": cursor - len(current),
+                        "end_char": cursor,
+                        "text": current
+                    })
+                current = para
+            cursor += len(para) + 1
+    if current:
         chunks.append({
             "doc_id": doc_id,
             "page": page_no,
-            "start_char": start,
-            "end_char": end,
-            "text": chunk_text
+            "start_char": cursor - len(current),
+            "end_char": cursor,
+            "text": current
         })
-
-        # compute next index and prevent infinite loop
-        next_i = end - chunk_overlap
-        if next_i <= start:
-            # page too short or overlap too large -> stop to avoid loop
-            break
-        i = next_i
     return chunks
 
-# ------------------------
-# Persistence utilities
-# ------------------------
+def chunk_page_semantic(doc_id: str, page_no: int, text: str,
+                        chunk_size: int = CHUNK_SIZE,
+                        chunk_overlap: int = CHUNK_OVERLAP) -> List[Dict]:
+    """
+    Chunk a single page using paragraph-aware logic.
+    """
+    if not text:
+        return []
+    if len(text) > MAX_PAGE_CHARS:
+        text = text[:MAX_PAGE_CHARS]
+    paras = paragraph_split(text)
+    return chunk_paragraphs_to_chunks(doc_id, page_no, paras, chunk_size, chunk_overlap)
+
+# -------------------------
+# Persistence helpers (legacy file-based)
+# -------------------------
 def save_metadata(metadata: List[Dict]):
     with open(METADATA_PATH, "w", encoding="utf-8") as f:
         json.dump(metadata, f, ensure_ascii=False, indent=2)
@@ -178,96 +260,93 @@ def load_bm25_corpus() -> List[List[str]]:
             return json.load(f)
     return []
 
-def save_faiss_index(index: faiss.Index):
-    faiss.write_index(index, FAISS_INDEX_PATH)
+def save_faiss_index(index: faiss.Index, path: str):
+    faiss.write_index(index, path)
 
-def load_faiss_index() -> faiss.Index:
-    if os.path.exists(FAISS_INDEX_PATH):
-        return faiss.read_index(FAISS_INDEX_PATH)
-    # create new index (IP with normalized embeddings acts like cosine)
+def load_faiss_index(path: Optional[str] = None) -> faiss.Index:
+    p = path or FAISS_INDEX_PATH
+    if os.path.exists(p):
+        return faiss.read_index(p)
     return faiss.IndexFlatIP(EMBED_DIM)
 
-# ------------------------
-# Build index (streaming, low-RAM)
-# ------------------------
-def build_index_from_pdf(pdf_path: str, doc_id: str, model_device: Optional[str] = None) -> Dict:
+# -------------------------
+# Async DB-backed hybrid search
+# -------------------------
+async def hybrid_search_db(query: str, top_k: int = 5, alpha: float = 0.6,
+                           model_device: Optional[str] = None) -> List[Dict]:
     """
-    Build or append to FAISS + BM25 from a PDF.
-      - pdf_path: path to PDF
-      - doc_id: arbitrary identifier for the document
-      - model_device: optional 'cuda' or 'cpu' override for get_model()
-    Returns summary dict.
+    DB-backed hybrid search:
+    - loads latest FaissIndexRegistry (via repo)
+    - loads FAISS index file
+    - fetches chunks (from chunks table) and builds BM25
+    - runs FAISS + BM25 and returns aligned results (uses faiss_to_chunk_ids mapping if present)
     """
-    print(">>> build_index_from_pdf:", pdf_path, "doc_id:", doc_id)
-    pages = load_pdf_pages(pdf_path)
-    print(f">>> PDF pages: {len(pages)}")
+    # lazy imports to avoid circular startup issues
+    try:
+        from app.repos.repo_rag import get_latest_faiss
+        from app.db.session import async_session
+        from sqlmodel import select
+        from app.models.models import Chunk
+    except Exception:
+        # If DB layer isn't present, fail gracefully
+        raise RuntimeError("Database layer imports failed. Ensure app.repos.repo_rag and app.db.session exist.")
 
-    metadata = load_metadata()
-    bm25_token_lists = load_bm25_corpus()
-    index = load_faiss_index()
-    model = get_model(device=model_device) if model_device is not None else get_model()
+    # 1) get registry
+    registry = await get_latest_faiss()
+    if not registry:
+        # nothing indexed
+        return []
 
-    new_chunks = 0
-    for page_no, page_text in enumerate(pages):
-        page_chunks = chunk_page_safe(doc_id, page_no, page_text)
-        print(f"  - page {page_no} -> {len(page_chunks)} chunks")
-        for meta in page_chunks:
-            chunk_text = meta["text"]
-            # token for BM25
-            bm25_token_lists.append(clean_and_tokenize(chunk_text)
-)
-            # embed one chunk at a time to avoid memory spikes
-            emb = model.encode([chunk_text], normalize_embeddings=True, convert_to_numpy=True)
-            emb = emb.astype("float32")
-            index.add(emb)  # add to faiss
-            metadata.append(meta)
-            new_chunks += 1
+    faiss_path = getattr(registry, "file_path", None) or getattr(registry, "faiss_path", None)
+    index = load_faiss_index(faiss_path)
 
-    # rebuild BM25 object and persist everything
-    bm25 = BM25Okapi(bm25_token_lists)
-    save_metadata(metadata)
-    save_bm25_corpus(bm25_token_lists)
-    save_faiss_index(index)
+    # mapping: faiss_index_pos -> chunk_id
+    mapping = getattr(registry, "faiss_to_chunk_ids", None) or getattr(registry, "faiss_to_chunk_ids", [])
+    if not mapping:
+        # If no mapping exists, try to fallback to sequential ids fetched from DB (dangerous)
+        async with async_session() as session:
+            q = select(Chunk)
+            res = await session.exec(q)
+            rows = res.scalars().all()
+        mapping = [r.id for r in rows]
 
-    print(f">>> Indexing done. added_chunks={new_chunks} total_chunks={len(metadata)}")
-    return {"added_chunks": new_chunks, "total_chunks": len(metadata)}
+    # Fetch chunk rows for IDs in mapping (one query)
+    async with async_session() as session:
+        q = select(Chunk).where(Chunk.id.in_(mapping))
+        res = await session.exec(q)
+        rows = res.scalars().all()
 
-# ------------------------
-# Load prebuilt files (convenience)
-# ------------------------
-def load_index_files():
-    """
-    Ensure FAISS + metadata + BM25 are loadable.
-    Returns tuple (index, metadata_list, bm25_object)
-    """
-    metadata = load_metadata()
-    token_lists = load_bm25_corpus()
-    index = load_faiss_index()
-    bm25 = BM25Okapi(token_lists) if token_lists else None
-    return index, metadata, bm25
+    id_to_row = {r.id: r for r in rows}
+    ordered_chunks = []
+    for cid in mapping:
+        r = id_to_row.get(cid)
+        if r:
+            ordered_chunks.append({
+                "id": r.id,
+                "doc_id": r.doc_id,
+                "page": getattr(r, "page", None),
+                "start_char": getattr(r, "start_char", None),
+                "end_char": getattr(r, "end_char", None),
+                "text": r.text
+            })
+        else:
+            ordered_chunks.append({
+                "id": cid,
+                "doc_id": "unknown",
+                "page": None,
+                "start_char": None,
+                "end_char": None,
+                "text": ""
+            })
 
-# ------------------------
-# Hybrid retrieval
-# ------------------------
-def hybrid_search(query: str, top_k: int = 5, alpha: float = 0.6,
-                  model_device: Optional[str] = None) -> List[Dict]:
-    """
-    Hybrid retrieval:
-      - semantic via FAISS (inner product on normalized embeddings)
-      - lexical via BM25
-      - final_score = alpha * sem_norm + (1-alpha) * bm_norm
-    Returns list of metadata dicts augmented with fields: score, sem_score, bm_score
-    """
-    metadata = load_metadata()
-    token_lists = load_bm25_corpus()
-    index = load_faiss_index()
-
-    # BM25 instance
+    # BM25 corpus in the same order as mapping
+    token_lists = [clean_and_tokenize(c["text"]) for c in ordered_chunks]
     bm25 = BM25Okapi(token_lists) if token_lists else None
 
-    # semantic
+    # semantic search (FAISS)
     model = get_model(device=model_device) if model_device is not None else get_model()
     q_emb = model.encode([query], normalize_embeddings=True, convert_to_numpy=True).astype("float32")
+
     if index.ntotal == 0:
         sem_idxs = []
         sem_scores_map = {}
@@ -275,38 +354,43 @@ def hybrid_search(query: str, top_k: int = 5, alpha: float = 0.6,
         D, I = index.search(q_emb, top_k)
         sem_idxs = [int(i) for i in I[0] if i >= 0]
         sem_scores_raw = [float(s) for s in D[0] if s is not None]
-        # normalize sem scores to 0..1
         if sem_scores_raw:
             smin, smax = min(sem_scores_raw), max(sem_scores_raw)
             denom = (smax - smin) if smax != smin else 1.0
-            sem_scores_map = {idx: (score - smin) / denom for idx, score in zip(sem_idxs, sem_scores_raw)}
+            # map FAISS positions to chunk ids
+            sem_scores_map = {}
+            for idx_pos, raw_score in zip(sem_idxs, sem_scores_raw):
+                if idx_pos < len(mapping):
+                    chunk_id = mapping[idx_pos]
+                    sem_scores_map[chunk_id] = (raw_score - smin) / denom
         else:
             sem_scores_map = {}
 
-    # lexical (BM25)
+    # lexical (BM25) -> positions correspond to mapping positions
     lex_scores_map = {}
     if bm25 is not None:
         qtok = clean_and_tokenize(query)
-        bm_scores = bm25.get_scores(qtok)  # vector of scores
-        # pick top_k lex candidates
-        top_bm_idx = np.argsort(bm_scores)[::-1][:top_k]
-        if len(top_bm_idx) > 0:
-            bm_vals = [float(bm_scores[i]) for i in top_bm_idx]
+        bm_scores = bm25.get_scores(qtok)
+        top_bm_pos = np.argsort(bm_scores)[::-1][:top_k]
+        if len(top_bm_pos) > 0:
+            bm_vals = [float(bm_scores[i]) for i in top_bm_pos]
             bmin, bmax = min(bm_vals), max(bm_vals)
             denom = (bmax - bmin) if bmax != bmin else 1.0
-            for i in top_bm_idx:
-                lex_scores_map[int(i)] = (float(bm_scores[i]) - bmin) / denom
+            for pos in top_bm_pos:
+                if pos < len(mapping):
+                    chunk_id = mapping[int(pos)]
+                    lex_scores_map[chunk_id] = (float(bm_scores[int(pos)]) - bmin) / denom
 
-    # combine candidates
-    candidate_idxs = set(list(sem_scores_map.keys()) + list(lex_scores_map.keys()))
+    # combine candidate chunk_ids
+    candidate_chunk_ids = set(list(sem_scores_map.keys()) + list(lex_scores_map.keys()))
     results = []
-    for idx in candidate_idxs:
-        s = sem_scores_map.get(idx, 0.0)
-        b = lex_scores_map.get(idx, 0.0)
+    for cid in candidate_chunk_ids:
+        s = sem_scores_map.get(cid, 0.0)
+        b = lex_scores_map.get(cid, 0.0)
         final = float(alpha * s + (1.0 - alpha) * b)
-        meta = metadata[idx] if idx < len(metadata) else {"doc_id": "unknown", "page": -1, "text": ""}
+        meta = next((c for c in ordered_chunks if c["id"] == cid), {"doc_id":"unknown","page":-1,"text":""})
         entry = {
-            "idx": idx,
+            "chunk_id": cid,
             "doc_id": meta.get("doc_id"),
             "page": meta.get("page"),
             "start_char": meta.get("start_char"),
@@ -321,9 +405,70 @@ def hybrid_search(query: str, top_k: int = 5, alpha: float = 0.6,
     results.sort(key=lambda x: x["score"], reverse=True)
     return results[:top_k]
 
-# ------------------------
-# Context builder for prompt
-# ------------------------
+# -------------------------
+# Legacy file-based hybrid (sync) - kept for local debugging
+# -------------------------
+def hybrid_search_legacy(query: str, top_k: int = 5, alpha: float = 0.6,
+                         model_device: Optional[str] = None) -> List[Dict]:
+    metadata = load_metadata()
+    token_lists = load_bm25_corpus()
+    index = load_faiss_index()
+    bm25 = BM25Okapi(token_lists) if token_lists else None
+
+    model = get_model(device=model_device) if model_device is not None else get_model()
+    q_emb = model.encode([query], normalize_embeddings=True, convert_to_numpy=True).astype("float32")
+
+    if index.ntotal == 0:
+        sem_idxs = []
+        sem_scores_map = {}
+    else:
+        D, I = index.search(q_emb, top_k)
+        sem_idxs = [int(i) for i in I[0] if i >= 0]
+        sem_scores_raw = [float(s) for s in D[0] if s is not None]
+        if sem_scores_raw:
+            smin, smax = min(sem_scores_raw), max(sem_scores_raw)
+            denom = (smax - smin) if smax != smin else 1.0
+            sem_scores_map = {idx: (score - smin) / denom for idx, score in zip(sem_idxs, sem_scores_raw)}
+        else:
+            sem_scores_map = {}
+
+    lex_scores_map = {}
+    if bm25 is not None:
+        qtok = clean_and_tokenize(query)
+        bm_scores = bm25.get_scores(qtok)
+        top_bm_idx = np.argsort(bm_scores)[::-1][:top_k]
+        if len(top_bm_idx) > 0:
+            bm_vals = [float(bm_scores[i]) for i in top_bm_idx]
+            bmin, bmax = min(bm_vals), max(bm_vals)
+            denom = (bmax - bmin) if bmax != bmin else 1.0
+            for i in top_bm_idx:
+                lex_scores_map[int(i)] = (float(bm_scores[i]) - bmin) / denom
+
+    candidate_idxs = set(list(sem_scores_map.keys()) + list(lex_scores_map.keys()))
+    results = []
+    for idx in candidate_idxs:
+        s = sem_scores_map.get(idx, 0.0)
+        b = lex_scores_map.get(idx, 0.0)
+        final = float(alpha * s + (1.0 - alpha) * b)
+        meta = metadata[idx] if idx < len(metadata) else {"doc_id":"unknown","page":-1,"text":""}
+        entry = {
+            "idx": idx,
+            "doc_id": meta.get("doc_id"),
+            "page": meta.get("page"),
+            "start_char": meta.get("start_char"),
+            "end_char": meta.get("end_char"),
+            "text": meta.get("text"),
+            "sem_score": float(s),
+            "bm_score": float(b),
+            "score": final
+        }
+        results.append(entry)
+    results.sort(key=lambda x: x["score"], reverse=True)
+    return results[:top_k]
+
+# -------------------------
+# Context builder
+# -------------------------
 def build_context(chunks: List[Dict], max_chars: int = 1500) -> str:
     parts = []
     total = 0
@@ -341,12 +486,6 @@ def build_context(chunks: List[Dict], max_chars: int = 1500) -> str:
         total += len(block)
     return "\n".join(parts)
 
-# ------------------------
-# Convenience main for manual testing
-# ------------------------
+
 if __name__ == "__main__":
-    # quick local test driver (no heavy defaults executed on import)
-    print("RAG engine module. Use build_index_from_pdf(...) or hybrid_search(...).")
-    # Example (commented): uncomment to run manually:
-    # build_index_from_pdf("data/mydoc.pdf", doc_id="mydoc", model_device="cuda")
-    # print(hybrid_search("what is the leave policy?", top_k=3))
+    print("RAG engine module.")

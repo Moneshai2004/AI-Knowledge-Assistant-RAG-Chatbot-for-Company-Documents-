@@ -2,6 +2,7 @@ __pycache__/
 *.pyc
 .venv/
 .env
+backend/env.py
 /data/uploads/
 *.sqlite3
 *.db
