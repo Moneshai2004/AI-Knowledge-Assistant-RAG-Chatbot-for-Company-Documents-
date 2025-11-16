@@ -1,6 +1,12 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from backend.app.api import routes_upload, routes_ask
+from app.api import routes_upload, routes_ask
+
+from dotenv import load_dotenv
+load_dotenv()
+import os
+print("### FASTAPI DATABASE_URL =", os.getenv("DATABASE_URL"))
+
 
 app = FastAPI(title="AI Knowledge Assistant - Backend")
 
