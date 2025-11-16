@@ -32,21 +32,49 @@ except Exception:
 
 from rank_bm25 import BM25Okapi
 
-EMBED_MODEL_NAME = os.getenv("EMBED_MODEL_NAME", "sentence-transformers/paraphrase-MiniLM-L3-v2")
+EMBED_MODEL_NAME = os.getenv("EMBED_MODEL_NAME", "BAAI/bge-base-en")
 
 # Data files
 DATA_DIR = os.getenv("RAG_DATA_DIR", "data")
 FAISS_INDEX_PATH = os.path.join(DATA_DIR, "faiss.index")
 METADATA_PATH = os.path.join(DATA_DIR, "chunk_metadata.json")
 BM25_CORPUS_PATH = os.path.join(DATA_DIR, "bm25_corpus.json")
-EMBED_DIM = int(os.getenv("EMBED_DIM", "384"))  # default for these MiniLM models
+EMBED_DIM = int(os.getenv("EMBED_DIM", "768"))  # default for these MiniLM models
 
 os.makedirs(DATA_DIR, exist_ok=True)
 
-_token_re = re.compile(r"\w+")
-def simple_tokenize(text: str) -> List[str]:
-    return _token_re.findall(text.lower())
+import re
 
+_token_cleanup_re = re.compile(r"\s+")
+_word_re = re.compile(r"[a-zA-Z0-9\-]+")
+
+def clean_and_tokenize(text: str) -> List[str]:
+    """
+    Clean noisy HR PDF text and return high-quality tokens for BM25.
+    """
+    text = text.lower()
+
+    # Fix broken words (remove weird spaces)
+    text = text.replace("comp ensation", "compensation")
+    text = text.replace("d ecisions", "decisions")
+    text = text.replace("abo ut", "about")
+    text = text.replace("forme rly", "formerly")
+    text = text.replace("inter nal", "internal")
+    text = text.replace("exter nal", "external")
+
+    # Remove extra whitespace
+    text = _token_cleanup_re.sub(" ", text)
+
+    # Extract clean tokens
+    tokens = _word_re.findall(text)
+
+    # Filter out meaningless tokens
+    tokens = [
+        t for t in tokens
+        if len(t) > 2 or t.isdigit()  # keep digits (CIN/address) but remove tiny garbage
+    ]
+
+    return tokens
 
 _embed_model = None
 def get_model(device: Optional[str] = None):
@@ -186,7 +214,8 @@ def build_index_from_pdf(pdf_path: str, doc_id: str, model_device: Optional[str]
         for meta in page_chunks:
             chunk_text = meta["text"]
             # token for BM25
-            bm25_token_lists.append(simple_tokenize(chunk_text))
+            bm25_token_lists.append(clean_and_tokenize(chunk_text)
+)
             # embed one chunk at a time to avoid memory spikes
             emb = model.encode([chunk_text], normalize_embeddings=True, convert_to_numpy=True)
             emb = emb.astype("float32")
@@ -257,7 +286,7 @@ def hybrid_search(query: str, top_k: int = 5, alpha: float = 0.6,
     # lexical (BM25)
     lex_scores_map = {}
     if bm25 is not None:
-        qtok = simple_tokenize(query)
+        qtok = clean_and_tokenize(query)
         bm_scores = bm25.get_scores(qtok)  # vector of scores
         # pick top_k lex candidates
         top_bm_idx = np.argsort(bm_scores)[::-1][:top_k]
