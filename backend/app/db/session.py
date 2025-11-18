@@ -6,7 +6,6 @@ from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy import create_engine
 
-# FORCE the correct DB path
 DB_PATH = "sqlite+aiosqlite:///./data/rag.db"
 SYNC_DB_PATH = "sqlite:///./data/rag.db"
 
@@ -20,13 +19,12 @@ async_session = sessionmaker(
     engine, class_=AsyncSession, expire_on_commit=False
 )
 
-# Sync engine for creating tables
+# Sync engine for table creation
 sync_engine = create_engine(
     SYNC_DB_PATH,
     echo=False,
     future=True
 )
 
-async def init_db():
-    # nothing here; table creation handled separately
-    pass
+def create_db_and_tables():
+    SQLModel.metadata.create_all(sync_engine)

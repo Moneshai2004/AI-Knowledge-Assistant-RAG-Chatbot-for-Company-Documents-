@@ -2,14 +2,14 @@
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 from app.core.rag_engine import hybrid_search_db, build_context
-from app.core.llm import generate_answer  # your groq wrapper
+from app.core.llm import generate_answer
 
-router = APIRouter(prefix="/ask", tags=["Ask"])
+router = APIRouter(prefix="", tags=["Ask"])
 
 class Query(BaseModel):
     question: str
 
-@router.post("/")
+@router.post("/ask")
 async def ask(query: Query):
     try:
         hits = await hybrid_search_db(query.question, top_k=5, alpha=0.1)
