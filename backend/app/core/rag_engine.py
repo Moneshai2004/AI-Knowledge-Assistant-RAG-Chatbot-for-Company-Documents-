@@ -288,7 +288,6 @@ async def hybrid_search_db(query: str, top_k: int = 5, alpha: float = 0.6,
         from sqlmodel import select
         from app.models.models import Chunk
     except Exception:
-        # If DB layer isn't present, fail gracefully
         raise RuntimeError("Database layer imports failed. Ensure app.repos.repo_rag and app.db.session exist.")
 
     # 1) get registry
@@ -297,25 +296,33 @@ async def hybrid_search_db(query: str, top_k: int = 5, alpha: float = 0.6,
         # nothing indexed
         return []
 
+    # registry might use different attribute names depending on your model version
     faiss_path = getattr(registry, "file_path", None) or getattr(registry, "faiss_path", None)
     index = load_faiss_index(faiss_path)
 
-    # mapping: faiss_index_pos -> chunk_id
-    mapping = getattr(registry, "faiss_to_chunk_ids", None) or getattr(registry, "faiss_to_chunk_ids", [])
+    # mapping: faiss_index_pos -> chunk_id (may be stored under many names)
+    mapping = getattr(registry, "faiss_to_chunk_ids", None) \
+              or getattr(registry, "faiss_to_chunk_id_map", None) \
+              or getattr(registry, "faiss_to_chunk_id", None) \
+              or getattr(registry, "chunk_ids", None) \
+              or getattr(registry, "faiss_mapping", None) \
+              or []
+
+    # If mapping is falsy or empty, fallback to sequential chunk ids from DB
     if not mapping:
-        # If no mapping exists, try to fallback to sequential ids fetched from DB (dangerous)
         async with async_session() as session:
             q = select(Chunk)
-            res = await session.exec(q)
-            rows = res.scalars().all()
+            result = await session.execute(q)
+            rows = result.scalars().all()
         mapping = [r.id for r in rows]
 
-    # Fetch chunk rows for IDs in mapping (one query)
+    # 2) fetch chunk rows for all IDs in mapping
     async with async_session() as session:
         q = select(Chunk).where(Chunk.id.in_(mapping))
-        res = await session.exec(q)
-        rows = res.scalars().all()
+        result = await session.execute(q)
+        rows = result.scalars().all()
 
+    # Build id -> row map and ordered_chunks in same order as mapping
     id_to_row = {r.id: r for r in rows}
     ordered_chunks = []
     for cid in mapping:
@@ -327,7 +334,7 @@ async def hybrid_search_db(query: str, top_k: int = 5, alpha: float = 0.6,
                 "page": getattr(r, "page", None),
                 "start_char": getattr(r, "start_char", None),
                 "end_char": getattr(r, "end_char", None),
-                "text": r.text
+                "text": r.text or ""
             })
         else:
             ordered_chunks.append({
@@ -348,23 +355,19 @@ async def hybrid_search_db(query: str, top_k: int = 5, alpha: float = 0.6,
     q_emb = model.encode([query], normalize_embeddings=True, convert_to_numpy=True).astype("float32")
 
     if index.ntotal == 0:
-        sem_idxs = []
         sem_scores_map = {}
     else:
         D, I = index.search(q_emb, top_k)
         sem_idxs = [int(i) for i in I[0] if i >= 0]
         sem_scores_raw = [float(s) for s in D[0] if s is not None]
+        sem_scores_map = {}
         if sem_scores_raw:
             smin, smax = min(sem_scores_raw), max(sem_scores_raw)
             denom = (smax - smin) if smax != smin else 1.0
-            # map FAISS positions to chunk ids
-            sem_scores_map = {}
             for idx_pos, raw_score in zip(sem_idxs, sem_scores_raw):
                 if idx_pos < len(mapping):
                     chunk_id = mapping[idx_pos]
                     sem_scores_map[chunk_id] = (raw_score - smin) / denom
-        else:
-            sem_scores_map = {}
 
     # lexical (BM25) -> positions correspond to mapping positions
     lex_scores_map = {}
@@ -469,7 +472,7 @@ def hybrid_search_legacy(query: str, top_k: int = 5, alpha: float = 0.6,
 # -------------------------
 # Context builder
 # -------------------------
-def build_context(chunks: List[Dict], max_chars: int = 1500) -> str:
+def build_context(chunks: List[Dict], max_chars: int = 4000) -> str:
     parts = []
     total = 0
     for c in chunks:

@@ -1,15 +1,14 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from app.api import routes_upload, routes_ask
-
+from app.db.session import create_db_and_tables
 from dotenv import load_dotenv
-load_dotenv()
 import os
+
+load_dotenv()
 print("### FASTAPI DATABASE_URL =", os.getenv("DATABASE_URL"))
 
-
 app = FastAPI(title="AI Knowledge Assistant - Backend")
-
 
 app.add_middleware(
     CORSMiddleware,
@@ -19,9 +18,15 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+@app.on_event("startup")
+def on_startup():
+    print("### Creating DB Tables...")
+    create_db_and_tables()
+    print("### Tables created successfully.")
+
 app.include_router(routes_upload.router)
 app.include_router(routes_ask.router)
 
 @app.get("/")
 def root():
-    return {"status": "ok", "message": "Backend running fine"}
+    return {"status": "ok"}
