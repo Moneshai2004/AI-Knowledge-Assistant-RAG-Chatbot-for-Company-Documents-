@@ -6,31 +6,32 @@ from sqlalchemy import Column, JSON
 
 class Document(SQLModel, table=True):
     id: Optional[int] = Field(default=None, primary_key=True)
-    doc_id: str
+    doc_id: str = Field(index=True, unique=True)
     file_path: str
     meta_json: Optional[str] = None  # renamed from reserved "metadata"
     created_at: datetime = Field(default_factory=datetime.utcnow)
 
 
-class Chunk(SQLModel, table=True):
-    id: Optional[int] = Field(default=None, primary_key=True)
-    doc_id: str
-    chunk_id: int
-    text: str
-    page: int
-    start_char: int
-    end_char: int
-    created_at: datetime = Field(default_factory=datetime.utcnow)
 
+class Chunk(SQLModel, table=True):
+    id: Optional[int] = Field(default=None, primary_key=True)  # DB autoinc PK
+    doc_id: str
+    chunk_id: Optional[int] = Field(default=None, index=True)  # <-- store global chunk id (set after insert)
+    text: str
+    page: Optional[int] = None
+    start_char: Optional[int] = None
+    end_char: Optional[int] = None
+    created_at: datetime = Field(default_factory=datetime.utcnow)
 
 class FaissIndexRegistry(SQLModel, table=True):
     id: Optional[int] = Field(default=None, primary_key=True)
-    faiss_path: str
-    bm25_path: str
-    embed_dim: int
-    total_chunks: int
+    faiss_path: Optional[str] = None
+    bm25_path: Optional[str] = None
+    embed_dim: Optional[int] = None
+    total_chunks: Optional[int] = None
+    # store mapping: list of chunk_id ints in faiss index order
+    faiss_to_chunk_ids: List[int] = Field(sa_column=Column(JSON), default_factory=list)
     created_at: datetime = Field(default_factory=datetime.utcnow)
-
 
 class QueryLog(SQLModel, table=True):
     id: Optional[int] = Field(default=None, primary_key=True)

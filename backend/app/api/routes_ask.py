@@ -9,7 +9,7 @@ router = APIRouter(prefix="", tags=["Ask"])
 class Query(BaseModel):
     question: str
 
-@router.post("/ask")
+@router.post("/ask/")
 async def ask(query: Query):
     try:
         hits = await hybrid_search_db(query.question, top_k=5, alpha=0.1)
