@@ -291,10 +291,18 @@ async def hybrid_search_db(query: str, top_k: int = 5, alpha: float = 0.6,
         raise RuntimeError("Database layer imports failed. Ensure app.repos.repo_rag and app.db.session exist.")
 
     # 1) get registry
-    registry = await get_latest_faiss()
-    if not registry:
-        # nothing indexed
+        # 1) get registry — use the latest global registry if present
+    from app.repos.repo_rag import get_all_faiss_registries
+
+    regs = await get_all_faiss_registries()
+    if not regs:
+        # nothing indexed at all
         return []
+
+    # The last registry entry is the most recent; when you run the manual merge,
+    # it will append a global registry as the newest row. Use that.
+    registry = regs[-1]
+
 
     # registry might use different attribute names depending on your model version
     faiss_path = getattr(registry, "file_path", None) or getattr(registry, "faiss_path", None)
@@ -309,12 +317,15 @@ async def hybrid_search_db(query: str, top_k: int = 5, alpha: float = 0.6,
               or []
 
     # If mapping is falsy or empty, fallback to sequential chunk ids from DB
+    # after registry load
     if not mapping:
+    # fallback (not ideal). We'll pull all chunks ordered by id ASC
         async with async_session() as session:
-            q = select(Chunk)
-            result = await session.execute(q)
-            rows = result.scalars().all()
+            q = select(Chunk).order_by(Chunk.id)
+            res = await session.execute(q)
+            rows = res.scalars().all()
         mapping = [r.id for r in rows]
+
 
     # 2) fetch chunk rows for all IDs in mapping
     async with async_session() as session:

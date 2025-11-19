@@ -17,12 +17,28 @@ async def bulk_insert_chunks(chunks: List[Chunk]) -> int:
         await session.commit()
         return len(chunks)
 
+# create_faiss_registry now accepts faiss_to_chunk_ids
 async def create_faiss_registry(reg: FaissIndexRegistry) -> FaissIndexRegistry:
     async with async_session() as session:
         session.add(reg)
         await session.commit()
         await session.refresh(reg)
         return reg
+
+async def get_all_faiss_registries():
+    async with async_session() as session:
+        q = select(FaissIndexRegistry).order_by(FaissIndexRegistry.created_at.asc())
+        res = await session.execute(q)
+        return res.scalars().all()
+
+# optional convenience: bulk_insert_chunks already exists — keep it, but ensure it returns list of inserted rows if you want
+async def bulk_insert_chunks_return_rows(chunks: List[Chunk]) -> List[Chunk]:
+    async with async_session() as session:
+        session.add_all(chunks)
+        await session.commit()
+        for ch in chunks:
+            await session.refresh(ch)
+        return chunks
 
 async def get_latest_faiss() -> Optional[FaissIndexRegistry]:
     async with async_session() as session:
