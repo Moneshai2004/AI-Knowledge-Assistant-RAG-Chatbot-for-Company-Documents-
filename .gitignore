@@ -13,3 +13,4 @@ data/HR-Policy.pdf
 data/faiss_index
 data/embeddings.pkl
 .env
+backend/data
