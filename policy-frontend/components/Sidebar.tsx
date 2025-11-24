@@ -10,6 +10,7 @@ const nav = [
   { href: "/", label: "Chat" },
   { href: "/upload", label: "Upload PDF" },
   { href: "/admin", label: "Admin Tools" },
+  { href: "/documents", label: "Documents" },
 ];
 
 export default function Sidebar() {

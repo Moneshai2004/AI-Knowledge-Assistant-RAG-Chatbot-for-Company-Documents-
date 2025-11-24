@@ -295,6 +295,14 @@ async def hybrid_search_db(query: str, top_k: int = 5, alpha: float = 0.6,
     from app.repos.repo_rag import get_all_faiss_registries
 
     regs = await get_all_faiss_registries()
+    # Load Document rows so we can map doc_id → file_name
+    from app.models.models import Document
+
+    async with async_session() as session:
+        q = select(Document)
+        docs_res = await session.execute(q)
+        docs = docs_res.scalars().all()
+
     if not regs:
         # nothing indexed at all
         return []
@@ -403,6 +411,12 @@ async def hybrid_search_db(query: str, top_k: int = 5, alpha: float = 0.6,
         b = lex_scores_map.get(cid, 0.0)
         final = float(alpha * s + (1.0 - alpha) * b)
         meta = next((c for c in ordered_chunks if c["id"] == cid), {"doc_id":"unknown","page":-1,"text":""})
+        # Map doc_id → file_name
+        doc_row = next((d for d in docs if d.doc_id == meta.get("doc_id")), None)
+        file_name = None
+        if doc_row and doc_row.file_path:
+            file_name = os.path.basename(doc_row.file_path)
+
         entry = {
             "chunk_id": cid,
             "doc_id": meta.get("doc_id"),
@@ -410,10 +424,12 @@ async def hybrid_search_db(query: str, top_k: int = 5, alpha: float = 0.6,
             "start_char": meta.get("start_char"),
             "end_char": meta.get("end_char"),
             "text": meta.get("text"),
+            "file_name": file_name,   
             "sem_score": float(s),
             "bm_score": float(b),
             "score": final
         }
+
         results.append(entry)
 
     results.sort(key=lambda x: x["score"], reverse=True)
