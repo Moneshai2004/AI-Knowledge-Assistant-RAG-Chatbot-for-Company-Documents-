@@ -417,18 +417,19 @@ async def hybrid_search_db(query: str, top_k: int = 5, alpha: float = 0.6,
         if doc_row and doc_row.file_path:
             file_name = os.path.basename(doc_row.file_path)
 
-        entry = {
-            "chunk_id": cid,
-            "doc_id": meta.get("doc_id"),
-            "page": meta.get("page"),
-            "start_char": meta.get("start_char"),
-            "end_char": meta.get("end_char"),
-            "text": meta.get("text"),
-            "file_name": file_name,   
-            "sem_score": float(s),
-            "bm_score": float(b),
-            "score": final
-        }
+            entry = {
+        "chunk_id": cid,
+        "doc_id": meta.get("doc_id"),
+        "file_name": f"{meta.get('doc_id')}.pdf",  
+        "page": meta.get("page"),
+        "start_char": meta.get("start_char"),
+        "end_char": meta.get("end_char"),
+        "text": meta.get("text"),
+        "sem_score": float(s),
+        "bm_score": float(b),
+        "score": final
+    }
+
 
         results.append(entry)
 

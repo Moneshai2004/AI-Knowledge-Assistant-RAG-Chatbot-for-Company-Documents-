@@ -1,4 +1,5 @@
 "use client";
+import AdminTools from "@/components/AdminTools";
 
 import Sidebar from "@/components/Sidebar";
 import { mergeIndexes } from "@/lib/api";
@@ -21,12 +22,7 @@ export default function AdminPage() {
           Manage FAISS indexes and retrieval resources.
         </p>
 
-        <button
-          onClick={handleMerge}
-          className="rounded bg-purple-700 px-4 py-2 text-sm"
-        >
-          Merge All PDF Indexes
-        </button>
+        <AdminTools />
 
         {res && (
           <pre className="mt-6 rounded border border-slate-800 bg-slate-900 p-4 text-xs">
