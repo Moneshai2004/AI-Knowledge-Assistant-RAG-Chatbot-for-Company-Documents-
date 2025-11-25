@@ -55,7 +55,8 @@ export default function Sidebar() {
             className="text-lg font-semibold 
             text-slate-900 dark:text-slate-100"
           >
-            AI Policy Assistant
+            AI company Document
+
           </span>
 
           <button

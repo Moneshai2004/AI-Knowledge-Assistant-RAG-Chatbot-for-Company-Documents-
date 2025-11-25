@@ -1,47 +1,31 @@
 "use client";
 
 import Sidebar from "@/components/Sidebar";
-import { uploadPDF } from "@/lib/api";
-import { useState } from "react";
+import PDFUploadBox from "@/components/PDFUploadBox";
 
 export default function UploadPage() {
-  const [file, setFile] = useState<File | null>(null);
-  const [result, setResult] = useState<any>(null);
-
-  const handleUpload = async () => {
-    if (!file) return;
-    const res = await uploadPDF(file);
-    setResult(res);
-  };
-
   return (
-    <div className="flex h-screen bg-slate-950 text-slate-50">
+    <div
+      className="flex h-screen 
+      bg-white text-slate-900 
+      dark:bg-slate-950 dark:text-slate-50"
+    >
       <Sidebar />
-      <main className="ml-0 flex-1 px-6 pt-8 md:ml-64">
-        <h1 className="text-xl font-semibold">Upload PDF</h1>
-        <p className="mb-6 text-sm text-slate-400">
-          Upload policy or HR documents for indexing.
-        </p>
 
-        <input
-          type="file"
-          accept="application/pdf"
-          onChange={(e) => setFile(e.target.files?.[0] || null)}
-          className="text-sm"
-        />
+      <main className="ml-0 flex-1 overflow-hidden md:ml-64">
+        <div className="flex h-full flex-col px-4 py-4 md:px-8 md:py-6">
+          <header className="mb-4">
+            <h1 className="text-lg font-semibold tracking-tight">
+              Upload & Index Policy PDFs
+            </h1>
+            <p className="text-xs text-slate-500 dark:text-slate-400 max-w-xl">
+              Upload new policy documents. They&apos;ll be chunked, embedded,
+              and added to the search index used by the AI assistant.
+            </p>
+          </header>
 
-        <button
-          onClick={handleUpload}
-          className="mt-4 rounded bg-indigo-600 px-4 py-2 text-sm"
-        >
-          Upload
-        </button>
-
-        {result && (
-          <pre className="mt-6 rounded border border-slate-800 bg-slate-900 p-4 text-xs">
-            {JSON.stringify(result, null, 2)}
-          </pre>
-        )}
+          <PDFUploadBox />
+        </div>
       </main>
     </div>
   );

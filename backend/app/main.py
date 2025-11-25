@@ -5,6 +5,9 @@ from app.db.session import create_db_and_tables
 from dotenv import load_dotenv
 import os
 from app.api import routes_upload, routes_ask, routes_admin
+from app.api.routes_documents import router as documents_router
+
+
 
 load_dotenv()
 print("### FASTAPI DATABASE_URL =", os.getenv("DATABASE_URL"))
@@ -28,6 +31,7 @@ def on_startup():
 app.include_router(routes_upload.router)
 app.include_router(routes_ask.router)
 app.include_router(routes_admin.router)
+app.include_router(documents_router)
 
 @app.get("/")
 def root():

@@ -2,8 +2,10 @@
 
 import { useEffect, useRef, useState } from "react";
 import * as pdfjsLib from "pdfjs-dist/legacy/build/pdf";
+import "pdfjs-dist/web/pdf_viewer.css";
 
-pdfjsLib.GlobalWorkerOptions.workerSrc = "/pdf.worker.js";
+// 🟢 CRITICAL FIX: Point worker to CDN
+pdfjsLib.GlobalWorkerOptions.workerSrc = `https://cdnjs.cloudflare.com/ajax/libs/pdf.js/${pdfjsLib.version}/pdf.worker.min.js`;
 
 interface Props {
   fileUrl: string;
@@ -14,6 +16,7 @@ export default function PdfJSViewer({ fileUrl, targetPage }: Props) {
   const viewerRef = useRef<HTMLDivElement>(null);
   const [pdf, setPdf] = useState<any>(null);
 
+  // Load PDF
   useEffect(() => {
     if (!fileUrl) return;
 
@@ -21,12 +24,13 @@ export default function PdfJSViewer({ fileUrl, targetPage }: Props) {
     task.promise.then(setPdf);
   }, [fileUrl]);
 
+  // Render PDF
   useEffect(() => {
-    if (!pdf || !viewerRef.current) return;
-
+    if (!pdf) return;
     const container = viewerRef.current;
+    if (!container) return;
 
-    (async () => {
+    const render = async () => {
       container.innerHTML = "";
 
       for (let pageNum = 1; pageNum <= pdf.numPages; pageNum++) {
@@ -40,26 +44,27 @@ export default function PdfJSViewer({ fileUrl, targetPage }: Props) {
         canvas.width = viewport.width;
 
         const wrapper = document.createElement("div");
-        wrapper.style.marginBottom = "20px";
+        wrapper.style.marginBottom = "16px";
         wrapper.appendChild(canvas);
-
         container.appendChild(wrapper);
 
-        await page.render({
-          canvasContext: ctx!,
-          viewport,
-        }).promise;
+        await page.render({ canvasContext: ctx!, viewport }).promise;
 
-        if (targetPage && targetPage === pageNum) {
+        if (targetPage && pageNum === targetPage) {
           setTimeout(() => {
-            wrapper.scrollIntoView({ behavior: "smooth" });
-          }, 200);
+            wrapper.scrollIntoView({ behavior: "smooth", block: "start" });
+          }, 300);
         }
       }
-    })();
+    };
+
+    render();
   }, [pdf, targetPage]);
 
   return (
-    <div ref={viewerRef} className="overflow-y-scroll h-full p-2 bg-muted/30" />
+    <div
+      ref={viewerRef}
+      className="overflow-y-scroll h-full p-2 rounded-xl bg-muted/30"
+    />
   );
 }
