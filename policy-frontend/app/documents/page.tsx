@@ -21,8 +21,8 @@ export default function DocumentsPage() {
       .then((res) => res.json())
       .then((data) => {
         const mapped = data.map((d: any) => ({
-          id: d.id,
-          title: d.id.replace(/_/g, " "),
+          id: d.doc_id, // ✅ FIXED
+          title: d.doc_id.replace(/[-_]/g, " "),
           fileName: d.file_name,
         }));
 
@@ -35,7 +35,7 @@ export default function DocumentsPage() {
       });
   }, []);
 
-  // When citation triggers "?file=<fname>"
+  // Auto-select when citations redirect to ?file=<fileName>
   useEffect(() => {
     if (file && documents.length > 0) {
       const found = documents.find((d) => d.fileName === file);
