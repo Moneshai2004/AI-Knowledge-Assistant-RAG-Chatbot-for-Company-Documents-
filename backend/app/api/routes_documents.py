@@ -15,7 +15,7 @@ async def list_documents():
 
     return [
         {
-            "id": d.doc_id,
+            "doc_id": d.doc_id,                 # 🔥 FIXED KEY
             "file_name": os.path.basename(d.file_path)
         }
         for d in docs
