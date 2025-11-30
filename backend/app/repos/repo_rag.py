@@ -60,3 +60,49 @@ async def save_evaluation(ev: Evaluation):
         await session.commit()
         await session.refresh(ev)
         return ev
+# -----------------------------
+# Stats helpers
+# -----------------------------
+async def count_documents() -> int:
+    async with async_session() as session:
+        q = select(Document)
+        res = await session.execute(q)
+        return len(res.scalars().all())
+
+async def count_chunks() -> int:
+    async with async_session() as session:
+        q = select(Chunk)
+        res = await session.execute(q)
+        return len(res.scalars().all())
+
+async def count_queries() -> int:
+    async with async_session() as session:
+        q = select(QueryLog)
+        res = await session.execute(q)
+        return len(res.scalars().all())
+
+# -----------------------------
+# Query log listing
+# -----------------------------
+async def get_query_logs(limit: int = 50):
+    async with async_session() as session:
+        q = (
+            select(QueryLog)
+            .order_by(QueryLog.timestamp.desc())
+            .limit(limit)
+        )
+        res = await session.execute(q)
+        return res.scalars().all()
+
+# -----------------------------
+# Latest FAISS registry info
+# -----------------------------
+async def get_latest_registry():
+    async with async_session() as session:
+        q = (
+            select(FaissIndexRegistry)
+            .order_by(FaissIndexRegistry.created_at.desc())
+            .limit(1)
+        )
+        res = await session.execute(q)
+        return res.scalars().first()
