@@ -7,12 +7,9 @@ from sqlmodel import select
 from app.core.rag_engine import hybrid_search_db, build_context
 from app.db.session import async_session
 from app.models.models import Document
-from app.services import lora_loader
+import app.services.lora_loader as lora
 
 
-# ----------------------------
-# FastAPI Router
-# ----------------------------
 router = APIRouter(prefix="", tags=["Ask"])
 
 
@@ -20,55 +17,58 @@ class Query(BaseModel):
     question: str
 
 
-# ----------------------------
-# LoRA Inference
-# ----------------------------
 def generate_with_lora(question: str, context: str) -> str:
-    model = lora_loader.model
-    tokenizer = lora_loader.tokenizer
+    model, tokenizer = lora.get_lora_model()
 
     if model is None or tokenizer is None:
-        return "ERROR: LoRA not loaded."
+        raise HTTPException(status_code=500, detail="LoRA not loaded")
 
-    prompt = f"""
-### Instruction:
-Answer the question using ONLY the provided context.
+    prompt = (
+        "You are an assistant that answers using ONLY the provided context.\n\n"
+        f"Context:\n{context}\n\n"
+        f"Question: {question}\n"
+        "Answer:"
+    )
 
-### Input:
-Context:
-{context}
+    device = next(model.parameters()).device
 
-Question:
-{question}
+    inputs = tokenizer(
+        prompt,
+        return_tensors="pt",
+        truncation=True,
+        max_length=1024,
+        padding=True,
+    )
 
-### Response:
-"""
+    input_ids = inputs["input_ids"].to(device)
+    attention_mask = inputs["attention_mask"].to(device)    # FIXED
 
-    inputs = tokenizer(prompt, return_tensors="pt")
+    output_ids = model.generate(
+        input_ids=input_ids,
+        attention_mask=attention_mask,
+        max_new_tokens=200,
+        temperature=0.7,
+        top_p=0.9,
+        top_k=50,
+        repetition_penalty=1.2,
+        no_repeat_ngram_size=3,
+        pad_token_id=tokenizer.pad_token_id or tokenizer.eos_token_id,
+    )
 
-    with torch.no_grad():
-        outputs = model.generate(
-            **inputs,
-            max_new_tokens=200,
-            temperature=0.7,
-            pad_token_id=tokenizer.eos_token_id,
-        )
+    # remove prompt
+    generated = output_ids[0, input_ids.shape[1]:]
+    text = tokenizer.decode(generated, skip_special_tokens=True).strip()
 
-    result = tokenizer.decode(outputs[0], skip_special_tokens=True)
+    # Clean up GPT-2 repeating "Answer:"
+    if text.lower().startswith("answer:"):
+        text = text[7:].strip()
 
-    if "### Response:" in result:
-        return result.split("### Response:")[-1].strip()
-
-    return result.strip()
+    return text
 
 
-# ----------------------------
-# Ask API
-# ----------------------------
 @router.post("/ask/")
 async def ask(query: Query):
     try:
-        # --- RAG Search ---
         hits = await hybrid_search_db(query.question, top_k=5, alpha=0.1)
 
         doc_ids = {h.get("doc_id") for h in hits if h.get("doc_id")}
@@ -82,7 +82,6 @@ async def ask(query: Query):
             for d in docs:
                 doc_map[d.doc_id] = os.path.basename(d.file_path)
 
-        # --- Format sources ---
         enriched = []
         for h in hits:
             snippet = (h.get("text") or "").replace("\n", " ").strip()
@@ -97,10 +96,7 @@ async def ask(query: Query):
                 "score": h.get("score"),
             })
 
-        # --- Build RAG context ---
         context = build_context(hits, max_chars=1500)
-
-        # --- Generate using LoRA ---
         answer = generate_with_lora(query.question, context)
 
         return {

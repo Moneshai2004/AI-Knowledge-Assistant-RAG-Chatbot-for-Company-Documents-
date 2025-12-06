@@ -14,6 +14,9 @@ from app.api.routes_admin_logs import router as admin_logs_router
 from app.api.routes_auth import router as auth_router
 from app.api.routes_lora import router as lora_router
 
+# ⬅️ Import the loader
+from app.services.lora_loader import load_lora
+
 load_dotenv()
 print("### FASTAPI DATABASE_URL =", os.getenv("DATABASE_URL"))
 
@@ -32,6 +35,16 @@ def startup_event():
     print("### Creating DB Tables...")
     create_db_and_tables()
     print("### Tables created successfully.")
+
+    # ⬅️ Load LoRA at startup (this is the missing part)
+    lora_path = "../lora_models/my_lora"
+
+    print(f"### Loading LoRA from startup: {lora_path}")
+    ok = load_lora(lora_path)
+    if not ok:
+        print("### ERROR: LoRA failed to load at startup!")
+    else:
+        print("### LoRA loaded successfully at startup.")
 
 # Register all routers
 app.include_router(upload_router)

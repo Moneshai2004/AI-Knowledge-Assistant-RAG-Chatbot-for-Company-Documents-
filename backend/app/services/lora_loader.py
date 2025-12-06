@@ -1,115 +1,104 @@
 import os
-from typing import Optional
+from pathlib import Path
+from threading import Lock
+from typing import Optional, Tuple
 
 import torch
 from transformers import AutoModelForCausalLM, AutoTokenizer
 from peft import PeftModel
 
-# -----------------------------
-# Base model config
-# -----------------------------
 BASE_MODEL = os.getenv("LORA_BASE_MODEL", "gpt2")
 
-# Global state – shared across app
-model: Optional[torch.nn.Module] = None
-tokenizer: Optional[AutoTokenizer] = None
-active_lora_path: Optional[str] = None
+_model: Optional[torch.nn.Module] = None
+_tokenizer: Optional[AutoTokenizer] = None
+_active_lora: Optional[str] = None
+
+_lock = Lock()
 
 
-def load_base_model():
+def load_lora(lora_dir: str) -> bool:
     """
-    Load the base model (GPT-2) without any LoRA.
-    Called once, and again when we unload LoRA.
+    Load a LoRA adapter + tokenizer from lora_dir.
     """
-    global model, tokenizer, active_lora_path
 
-    # If we already have base model and no LoRA, reuse it
-    if model is not None and active_lora_path is None and tokenizer is not None:
-        return model, tokenizer
+    global _model, _tokenizer, _active_lora
 
-    print(f"[LORA] Loading base model: {BASE_MODEL}")
-    tokenizer = AutoTokenizer.from_pretrained(BASE_MODEL)
+    lora_path = Path(lora_dir).resolve()
 
-    # GPT-2 has no pad token; use EOS as pad
-    if tokenizer.pad_token is None:
-        tokenizer.pad_token = tokenizer.eos_token
-
-    model = AutoModelForCausalLM.from_pretrained(
-        BASE_MODEL,
-        torch_dtype=torch.float32,
-    )
-    model.eval()
-    active_lora_path = None
-
-    print("[LORA] Base model loaded.")
-    return model, tokenizer
-
-
-def load_lora(adapter_dir: str) -> bool:
-    """
-    Attach a LoRA adapter stored in adapter_dir.
-    adapter_dir must contain:
-      - adapter_config.json
-      - adapter_model.safetensors
-    """
-    global model, tokenizer, active_lora_path
-    from pathlib import Path
-
-    adapter_dir = str(Path(adapter_dir))
-    cfg_path = Path(adapter_dir) / "adapter_config.json"
-
-    print(f"[LORA] Requested LoRA load from: {adapter_dir}")
-
-    if not cfg_path.exists():
-        print(f"[LORA] ERROR: adapter_config.json not found in {adapter_dir}")
+    if not (lora_path / "adapter_config.json").exists():
+        print(f"[LORA] ERROR: adapter_config.json not found in {lora_path}")
         return False
 
-    # Ensure base model exists
-    load_base_model()
+    print(f"[LORA] Loading LoRA from: {lora_path}")
 
-    try:
-        print(f"[LORA] Attaching LoRA adapter from {adapter_dir} ...")
-        lora_model = PeftModel.from_pretrained(
-            model,
-            adapter_dir,
+    with _lock:
+        # Load tokenizer FROM THE LORA FOLDER
+        tok = AutoTokenizer.from_pretrained(str(lora_path))
+        if tok.pad_token is None:
+            tok.pad_token = tok.eos_token
+
+        # Load base model only once
+        print(f"[LORA] Loading base model: {BASE_MODEL}")
+        base = AutoModelForCausalLM.from_pretrained(
+            BASE_MODEL,
             torch_dtype=torch.float32,
         )
-        lora_model.eval()
 
-        model = lora_model
-        active_lora_path = adapter_dir
+        # Attach LoRA
+        model = PeftModel.from_pretrained(
+            base,
+            str(lora_path),
+            torch_dtype=torch.float32
+        )
+        model.eval()
+
+        device = "cuda" if torch.cuda.is_available() else "cpu"
+        model.to(device)
+
+        _model = model
+        _tokenizer = tok
+        _active_lora = str(lora_path)
 
         print("[LORA] LoRA loaded successfully.")
         return True
 
-    except Exception as e:
-        print(f"[LORA] ERROR while loading LoRA: {e}")
-        active_lora_path = None
-        return False
-
 
 def unload_lora() -> bool:
-    """
-    Remove LoRA and go back to pure base model.
-    """
-    global model, tokenizer, active_lora_path
-    print("[LORA] Unloading LoRA and reloading base model...")
+    """Return to pure base model."""
+    global _model, _tokenizer, _active_lora
 
-    model = None
-    tokenizer = None
-    active_lora_path = None
+    print("[LORA] Unloading LoRA...")
 
-    load_base_model()
-    print("[LORA] LoRA unloaded; base model active.")
+    with _lock:
+        # Load base model tokenizer
+        tok = AutoTokenizer.from_pretrained(BASE_MODEL)
+        if tok.pad_token is None:
+            tok.pad_token = tok.eos_token
+
+        base = AutoModelForCausalLM.from_pretrained(
+            BASE_MODEL,
+            torch_dtype=torch.float32,
+        )
+        base.eval()
+
+        device = "cuda" if torch.cuda.is_available() else "cpu"
+        base.to(device)
+
+        _model = base
+        _tokenizer = tok
+        _active_lora = None
+
+    print("[LORA] LoRA removed; base model active.")
     return True
 
 
+def get_lora_model() -> Tuple[Optional[torch.nn.Module], Optional[AutoTokenizer]]:
+    return _model, _tokenizer
+
+
 def get_lora_status():
-    """
-    Small helper for /lora/status endpoint.
-    """
     return {
         "base_model": BASE_MODEL,
-        "active_lora": active_lora_path,
-        "is_lora_loaded": active_lora_path is not None,
+        "active_lora": _active_lora,
+        "is_lora_loaded": _active_lora is not None
     }
