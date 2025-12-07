@@ -1,9 +1,9 @@
-# ===========================
-# 1) Base image
-# ===========================
-FROM python:3.10-slim
+# ---- Stage 1: Builder ----
+FROM python:3.10-slim AS builder
 
-# System deps
+WORKDIR /app
+
+# System dependencies (minimal)
 RUN apt-get update && apt-get install -y \
     build-essential \
     poppler-utils \
@@ -11,31 +11,30 @@ RUN apt-get update && apt-get install -y \
     libglib2.0-0 \
     && rm -rf /var/lib/apt/lists/*
 
+# Install only necessary pip packages
+COPY requirements.txt .
+RUN pip install --no-cache-dir --upgrade pip \
+    && pip install --no-cache-dir -r requirements.txt
+
+# ---- Stage 2: Runtime ----
+FROM python:3.10-slim
+
 WORKDIR /app
 
-# ===========================
-# 2) Install Python deps first
-# ===========================
-COPY requirements.txt /app/
-RUN pip install --no-cache-dir -r requirements.txt
+# Copy only installed libs (NOT build tools)
+COPY --from=builder /usr/local/lib/python3.10 /usr/local/lib/python3.10
+COPY --from=builder /usr/local/bin /usr/local/bin
 
-# ===========================
-# 3) Copy ONLY backend code
-# ===========================
+# Copy app
 COPY app /app/app
 COPY start.sh /app/start.sh
 COPY railway.toml /app/railway.toml
 COPY prod_start.md /app/prod_start.md
-
-# Copy LoRA models ONLY
 COPY lora_models /app/lora_models
 
-# Create data dirs
 RUN mkdir -p /app/data/faiss && mkdir -p /app/data/uploads
-
-# Startup script
 RUN chmod +x /app/start.sh
 
 EXPOSE 8000
 
-CMD ["./start.sh"]
+CMD ["bash", "/app/start.sh"]
