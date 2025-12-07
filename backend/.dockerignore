@@ -1,0 +1,11 @@
+data/
+app/__pycache__/
+app/**/*.pyc
+*.pdf
+*.db
+*.json
+*.pkl
+node_modules/
+__pycache__/
+venv/
+.env

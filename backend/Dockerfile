@@ -1,11 +1,9 @@
-FROM python:3.10-slim as base
+# ===========================
+# 1) Base image
+# ===========================
+FROM python:3.10-slim
 
-ENV PYTHONDONTWRITEBYTECODE=1
-ENV PYTHONUNBUFFERED=1
-
-WORKDIR /app
-
-# System dependencies for FAISS, PyMuPDF, Peft
+# System deps
 RUN apt-get update && apt-get install -y \
     build-essential \
     poppler-utils \
@@ -13,13 +11,26 @@ RUN apt-get update && apt-get install -y \
     libglib2.0-0 \
     && rm -rf /var/lib/apt/lists/*
 
+WORKDIR /app
+
+# ===========================
+# 2) Install Python deps first
+# ===========================
 COPY requirements.txt /app/
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Copy backend app
-COPY . /app/
+# ===========================
+# 3) Copy ONLY backend code
+# ===========================
+COPY app /app/app
+COPY start.sh /app/start.sh
+COPY railway.toml /app/railway.toml
+COPY prod_start.md /app/prod_start.md
 
-# Create data dirs in container
+# Copy LoRA models ONLY
+COPY lora_models /app/lora_models
+
+# Create data dirs
 RUN mkdir -p /app/data/faiss && mkdir -p /app/data/uploads
 
 # Startup script
@@ -27,5 +38,4 @@ RUN chmod +x /app/start.sh
 
 EXPOSE 8000
 
-CMD ["/app/start.sh"]
-
+CMD ["./start.sh"]
