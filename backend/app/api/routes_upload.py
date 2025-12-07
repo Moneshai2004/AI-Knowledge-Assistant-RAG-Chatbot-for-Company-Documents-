@@ -1,4 +1,3 @@
-# backend/app/api/routes_upload.py
 from fastapi import APIRouter, UploadFile, File, HTTPException, BackgroundTasks
 import os
 import shutil
@@ -6,12 +5,13 @@ from app.services.indexer import index_pdf_background
 
 router = APIRouter(prefix="/upload", tags=["Upload"])
 
-UPLOAD_DIR = "data/uploads"
-FRONTEND_POLICIES_DIR = "/home/moni/Desktop/ai-knowledge-assistant/policy-frontend/public/policies"
+# Use env vars so local/dev != production
+DATA_DIR = os.getenv("DATA_DIR", "backend/data")
+UPLOAD_DIR = os.getenv("UPLOAD_DIR", f"{DATA_DIR}/uploads")
+FRONTEND_POLICIES_DIR = os.getenv("FRONTEND_POLICIES_DIR", f"{DATA_DIR}/policies")
 
 os.makedirs(UPLOAD_DIR, exist_ok=True)
 os.makedirs(FRONTEND_POLICIES_DIR, exist_ok=True)
-
 @router.post("/")
 async def upload_pdf(background_tasks: BackgroundTasks, file: UploadFile = File(...)):
     try:

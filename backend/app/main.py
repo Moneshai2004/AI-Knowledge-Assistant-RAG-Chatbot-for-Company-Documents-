@@ -3,6 +3,11 @@ from fastapi.middleware.cors import CORSMiddleware
 from dotenv import load_dotenv
 from app.db.session import create_db_and_tables
 import os
+from pathlib import Path
+from dotenv import load_dotenv
+
+ENV_PATH = Path(__file__).resolve().parents[1] / ".env"
+load_dotenv(ENV_PATH)
 
 # Routers
 from app.api.routes_upload import router as upload_router
@@ -17,8 +22,10 @@ from app.api.routes_lora import router as lora_router
 # ⬅️ Import the loader
 from app.services.lora_loader import load_lora
 
+
 load_dotenv()
 print("### FASTAPI DATABASE_URL =", os.getenv("DATABASE_URL"))
+print("### Loaded env from:", ENV_PATH)
 
 app = FastAPI(title="AI Knowledge Assistant - Backend")
 
@@ -29,22 +36,22 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
-
 @app.on_event("startup")
-def startup_event():
+async def startup_event():
     print("### Creating DB Tables...")
-    create_db_and_tables()
+    await create_db_and_tables()
     print("### Tables created successfully.")
 
-    # ⬅️ Load LoRA at startup (this is the missing part)
-    lora_path = "../lora_models/my_lora"
-
+    lora_path = os.getenv("LORA_PATH", "lora_models/my_lora")
     print(f"### Loading LoRA from startup: {lora_path}")
+
     ok = load_lora(lora_path)
     if not ok:
         print("### ERROR: LoRA failed to load at startup!")
     else:
         print("### LoRA loaded successfully at startup.")
+
+
 
 # Register all routers
 app.include_router(upload_router)
