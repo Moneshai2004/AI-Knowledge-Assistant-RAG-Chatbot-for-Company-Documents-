@@ -1,13 +1,12 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-
-// ✅ Modern PDF.js build compatible with Webpack + Vercel
 import * as pdfjsLib from "pdfjs-dist/webpack.mjs";
-import workerSrc from "pdfjs-dist/build/pdf.worker.mjs?url";
 
-// Set worker
-pdfjsLib.GlobalWorkerOptions.workerSrc = workerSrc;
+// 👇 Correct worker import for Next.js 16 / Turbopack
+import workerURL from "pdfjs-dist/build/pdf.worker.mjs";
+
+pdfjsLib.GlobalWorkerOptions.workerSrc = workerURL;
 
 interface Props {
   fileUrl: string;
@@ -18,25 +17,23 @@ export default function PdfJSViewer({ fileUrl, targetPage }: Props) {
   const viewerRef = useRef<HTMLDivElement>(null);
   const [pdf, setPdf] = useState<any>(null);
 
-  // Load PDF in browser
   useEffect(() => {
     if (!fileUrl) return;
     const task = pdfjsLib.getDocument(fileUrl);
     task.promise.then(setPdf);
   }, [fileUrl]);
 
-  // Render pages
   useEffect(() => {
     if (!pdf) return;
 
     const container = viewerRef.current;
     if (!container) return;
 
-    const renderPages = async () => {
+    const render = async () => {
       container.innerHTML = "";
 
-      for (let pageNum = 1; pageNum <= pdf.numPages; pageNum++) {
-        const page = await pdf.getPage(pageNum);
+      for (let i = 1; i <= pdf.numPages; i++) {
+        const page = await pdf.getPage(i);
         const viewport = page.getViewport({ scale: 1.2 });
 
         const canvas = document.createElement("canvas");
@@ -51,15 +48,13 @@ export default function PdfJSViewer({ fileUrl, targetPage }: Props) {
 
         await page.render({ canvasContext: ctx, viewport }).promise;
 
-        if (targetPage === pageNum) {
-          setTimeout(() => {
-            wrapper.scrollIntoView({ behavior: "smooth" });
-          }, 300);
+        if (targetPage === i) {
+          wrapper.scrollIntoView({ behavior: "smooth" });
         }
       }
     };
 
-    renderPages();
+    render();
   }, [pdf, targetPage]);
 
   return (
