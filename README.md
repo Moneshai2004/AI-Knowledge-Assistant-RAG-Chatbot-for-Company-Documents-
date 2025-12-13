@@ -1,187 +1,134 @@
-AI HR Policy Assistant
+# AI HR Policy Assistant
 
-Hybrid RAG System with FAISS + BM25 + LoRA
+An internal AI-powered assistant that answers company HR and policy questions
+using a **Retrieval-Augmented Generation (RAG)** pipeline with **hybrid FAISS + BM25 retrieval**
+and **LoRA-controlled generation**, ensuring accurate, citation-backed answers
+with zero hallucination tolerance.
 
-An internal AI assistant that answers company HR and policy questions with citations, built using a production-grade Retrieval-Augmented Generation (RAG) architecture.
+<!-- Optional Social Preview Image -->
+<!--
+![AI HR Policy Assistant](https://socialify.git.ci/<YOUR_GITHUB_USERNAME>/<REPO_NAME>/image?description=1&font=Inter&language=1&name=1&theme=Dark)
+-->
 
-This system prioritizes correctness, transparency, and controllability over raw model intelligence.
+![Python](https://img.shields.io/badge/Python-3.9+-blue)
+![FastAPI](https://img.shields.io/badge/FastAPI-0.115-green)
+![FAISS](https://img.shields.io/badge/FAISS-Vector%20Search-orange)
+![RAG](https://img.shields.io/badge/RAG-Hybrid%20Search-purple)
+![License](https://img.shields.io/badge/License-MIT-lightgrey)
 
-Key Capabilities
+## 🚀 Project Demo
 
-📄 PDF ingestion & semantic chunking
+📌 **Live Demo:** _Not publicly deployed_
 
-🔍 Hybrid retrieval
+This project is designed as an **internal enterprise AI system**.
+Deployment details are intentionally omitted.
 
-FAISS (semantic similarity, cosine search)
+However, the repository includes:
+- End-to-end backend and frontend code
+- Admin dashboard
+- Evaluation pipeline
+- PDF ingestion and retrieval flow
 
-BM25 (lexical keyword matching)
+## 📸 Project Screenshots
 
-⚖️ Score fusion: final = α·semantic + (1−α)·lexical
+Medium post[https://medium.com/@moneshshanmugam/building-a-production-grade-ai-hr-policy-assistant-rag-lora-fastapi-next-js-0e8cf6fc8853]
 
-📎 Citation-based answers with page navigation
+- Chat interface with citations
+- PDF viewer with page navigation
+- Admin dashboard (stats & logs)
+- Evaluation dashboard
 
-🧠 LoRA fine-tuned generation (style & tone only — not facts)
+<!--
+![Chat UI](screenshots/chat.png)
+![Admin Dashboard](screenshots/admin.png)
+-->
 
-📊 Admin dashboard (stats, logs, index management)
+## ✨ Features
 
-🧪 Evaluation pipeline (precision, recall, MRR)
+- 📄 PDF upload & semantic chunking
+- 🔍 Hybrid retrieval (FAISS + BM25)
+- ⚖️ Score fusion with tunable alpha
+- 📎 Citation-based answers with page references
+- 🧠 LoRA fine-tuned generation (style-only)
+- 🧪 Retrieval evaluation pipeline
+- 📊 Admin dashboard (stats, logs, index merge)
+- 🔐 JWT-protected admin APIs
+- ⚙️ Async background indexing
 
-🔐 JWT-protected admin APIs
 
-⚙️ Async background indexing
+## ⚙️ Installation Steps
 
-🏗️ System Architecture (High Level)
-User Question
-     ↓
-Hybrid Retrieval
-  ├─ FAISS (semantic vectors)
-  └─ BM25 (lexical tokens)
-     ↓
-Score Fusion (α = 0.1)
-     ↓
-Top-K Chunks
-     ↓
-Context Builder
-     ↓
-LLM + LoRA (style only)
-     ↓
-Answer + Citations
+### 1️⃣ Clone the repository
+```bash
+git clone https://github.com/<YOUR_GITHUB_USERNAME>/<REPO_NAME>.git
+cd <REPO_NAME>
 
-🧠 Why Hybrid Retrieval?
+cd backend
+python -m venv venv
+source venv/bin/activate   # Linux / Mac
+# venv\Scripts\activate    # Windows
 
-HR and policy documents are lexical by nature — exact wording matters.
+pip install -r requirements.txt
 
-Pure semantic search often retrieves related but incorrect clauses.
 
-This system combines:
+uvicorn app.main:app --reload
 
-Semantic similarity → understands natural language
+3️⃣ Start backend
+uvicorn app.main:app --reload
 
-Lexical precision → respects exact policy language
+4️⃣ Frontend setup
+cd frontend
+npm install
+npm run dev
 
-After evaluation, α = 0.1 delivered the best precision@1 and MRR, confirming that lexical signals should dominate in this domain.
 
-🧩 FAISS Position ↔ Chunk Mapping (Important)
+📌 Backend runs on http://localhost:8000
+📌 Frontend runs on http://localhost:3000
 
-FAISS stores only vectors, not metadata.
 
-To reliably map search results back to documents:
+---
 
-Each FAISS index has a corresponding registry entry
+# ✅ Step 7: Contribution Guidelines (Optional)
 
-The registry stores an ordered mapping:
+```md
+## 🤝 Contribution Guidelines
 
-faiss_position → chunk_id
+This is currently a personal learning and portfolio project.
 
+Suggestions, bug reports, and improvements are welcome via issues.
+Please discuss major changes before opening a pull request.
 
-This guarantees deterministic retrieval even after:
+✅ Step 8: Technologies Used (Optional)
+## 🛠️ Technologies Used
 
-restarts
+### Backend
+- FastAPI
+- SQLModel + SQLite
+- FAISS
+- Sentence Transformers
+- Transformers + PEFT (LoRA)
+- PyMuPDF
 
-index merges
+### Frontend
+- Next.js (App Router)
+- Tailwind CSS
+- PDF.js
 
-background re-indexing
+✅ Step 9: License Information (Optional)
+## 📄 License
 
-🧠 LoRA Fine-Tuning Philosophy
+This project is licensed under the MIT License.
 
-LoRA is used only to control response style, not to inject knowledge.
 
-❌ No factual learning
+(Only include this if you actually add an MIT LICENSE file.)
 
-❌ No hallucination tolerance
+✅ Step 10: Support Information (Optional)
+## 💬 Support
 
-✅ Professional HR tone
+If you have questions about:
+- RAG system design
+- Hybrid retrieval
+- FAISS indexing
+- Evaluation strategies
 
-✅ Structured, concise answers
-
-If the LoRA adapter fails to load, the backend fails fast instead of silently degrading.
-
-🗂️ Repository Structure (Simplified)
-backend/
- ├── app/
- │   ├── api/              # FastAPI routes
- │   ├── core/             # RAG + retrieval logic
- │   ├── services/         # Indexer, evaluator, LoRA loader
- │   ├── models/           # SQLModel DB schemas
- │   ├── repos/            # DB access layer
- │   └── utils/            # FAISS utilities
- │
- ├── lora_models/          # LoRA adapters
- └── data/                 # PDFs, FAISS indexes, eval sets
-
-frontend/
- ├── app/                  # Next.js pages
- ├── components/           # UI components
- └── lib/                  # API helpers
-
-🧪 Evaluation
-
-The system includes a simple but effective evaluation pipeline:
-
-Upload labeled Q&A datasets (JSON)
-
-Run evaluation asynchronously
-
-Metrics stored in DB:
-
-precision-like overlap scoring
-
-per-question retrieval inspection
-
-overall score & runtime
-
-Evaluation is treated as a first-class citizen, not an afterthought.
-
-🛠️ Tech Stack
-
-Backend
-
-FastAPI
-
-SQLModel + SQLite
-
-FAISS
-
-Sentence Transformers
-
-Transformers + PEFT (LoRA)
-
-PyMuPDF
-
-Frontend
-
-Next.js (App Router)
-
-Tailwind CSS
-
-PDF.js
-
-TypeAnimation
-
-🎯 Design Principles
-
-Retrieval > Generation
-
-Transparency over magic
-
-Evaluation before optimization
-
-Models are unreliable — systems must compensate
-
-Fail fast instead of failing silently
-
-📌 Status
-
-✔️ End-to-end functional
-
-✔️ Retrieval evaluated
-
-✔️ Admin observability implemented
-
-🚫 Deployment details intentionally omitted
-
-📎 Notes
-
-This project was built to understand real-world RAG system design, not to showcase prompt tricks.
-
-If you’re interested in production AI engineering, hybrid retrieval, or safe LLM systems — this codebase is meant to be read, not just run.
+Feel free to open an issue or reach out via LinkedIn.
