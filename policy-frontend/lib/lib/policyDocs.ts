@@ -4,7 +4,7 @@ export const POLICY_DOCUMENTS: DocumentMeta[] = [
   {
     id: "hr-policy",
     title: "HR Policy",
-    fileName: "HR-Policy.pdf",
+    fileName: "hr_policy.pdf",
     description: "General HR rules, leave, timings, allowances.",
   },
   {
