@@ -1,134 +1,124 @@
 # AI HR Policy Assistant
 
-An internal AI-powered assistant that answers company HR and policy questions
-using a **Retrieval-Augmented Generation (RAG)** pipeline with **hybrid FAISS + BM25 retrieval**
-and **LoRA-controlled generation**, ensuring accurate, citation-backed answers
-with zero hallucination tolerance.
+A retrieval-augmented question-answering system over HR policy documents. Ask a
+question in plain English, get an answer grounded in the actual policy text with
+a citation back to the source page.
 
-<!-- Optional Social Preview Image -->
-<!--
-![AI HR Policy Assistant](https://socialify.git.ci/<YOUR_GITHUB_USERNAME>/<REPO_NAME>/image?description=1&font=Inter&language=1&name=1&theme=Dark)
--->
-
-![Python](https://img.shields.io/badge/Python-3.9+-blue)
-![FastAPI](https://img.shields.io/badge/FastAPI-0.115-green)
-![FAISS](https://img.shields.io/badge/FAISS-Vector%20Search-orange)
-![RAG](https://img.shields.io/badge/RAG-Hybrid%20Search-purple)
-![License](https://img.shields.io/badge/License-MIT-lightgrey)
-
-## 🚀 Project Demo
-
-📌 **Live Demo:** _Not publicly deployed_
-
-This project is designed as an **internal enterprise AI system**.
-Deployment details are intentionally omitted.
-
-However, the repository includes:
-- End-to-end backend and frontend code
-- Admin dashboard
-- Evaluation pipeline
-- PDF ingestion and retrieval flow
-
-## 📸 Project Screenshots
-
-Medium post[https://medium.com/@moneshshanmugam/building-a-production-grade-ai-hr-policy-assistant-rag-lora-fastapi-next-js-0e8cf6fc8853]
-
-- Chat interface with citations
-- PDF viewer with page navigation
-- Admin dashboard (stats & logs)
-- Evaluation dashboard
-
-<!--
-![Chat UI](screenshots/chat.png)
-![Admin Dashboard](screenshots/admin.png)
--->
-
-## ✨ Features
-
-- 📄 PDF upload & semantic chunking
-- 🔍 Hybrid retrieval (FAISS + BM25)
-- ⚖️ Score fusion with tunable alpha
-- 📎 Citation-based answers with page references
-- 🧠 LoRA fine-tuned generation (style-only)
-- 🧪 Retrieval evaluation pipeline
-- 📊 Admin dashboard (stats, logs, index merge)
-- 🔐 JWT-protected admin APIs
-- ⚙️ Async background indexing
-
-
-## ⚙️ Installation Steps
-
-### 1️⃣ Clone the repository
-```bash
-git clone https://github.com/<YOUR_GITHUB_USERNAME>/<REPO_NAME>.git
-cd <REPO_NAME>
-
-cd backend
-python -m venv venv
-source venv/bin/activate   # Linux / Mac
-# venv\Scripts\activate    # Windows
-
-pip install -r requirements.txt
-
-
-uvicorn app.main:app --reload
-
-3️⃣ Start backend
-uvicorn app.main:app --reload
-
-4️⃣ Frontend setup
-cd frontend
-npm install
-npm run dev
-
-
-📌 Backend runs on http://localhost:8000
-📌 Frontend runs on http://localhost:3000
-
+I built this because I wanted to query my own company's HR policy manual — a
+69-page PDF where finding one clause meant scrolling for ten minutes. The
+interesting engineering problem turned out not to be the generation step, but
+the retrieval step and, more than that, **how to know whether retrieval is any
+good.** Most of the work here is about measuring that.
 
 ---
 
-# ✅ Step 7: Contribution Guidelines (Optional)
+## Architecture
 
-```md
-## 🤝 Contribution Guidelines
+```
+PDF upload
+   ↓
+Text extraction (PyMuPDF) → hyphenation repair → NFKC normalisation
+   ↓                        → wrapped-line merge → heading detection
+Paragraph-aware semantic chunking (doc_id, page, char offsets retained)
+   ↓
+   ├──→ Dense: BAAI/bge-base-en embeddings → FAISS index
+   └──→ Lexical: cleaned tokens → BM25Okapi corpus
+   ↓
+Query → both retrievers → min-max normalise each → weighted fusion
+        final_score = α · semantic + (1 − α) · lexical
+   ↓
+Top-k chunks → context builder (char-budgeted) → LLM → cited answer
+```
 
-This is currently a personal learning and portfolio project.
+**Stack:** FastAPI · Next.js · FAISS · rank_bm25 · SentenceTransformers (BGE) ·
+PyMuPDF · PostgreSQL · JWT auth · Docker Compose
 
-Suggestions, bug reports, and improvements are welcome via issues.
-Please discuss major changes before opening a pull request.
+**Features:** PDF upload with async background indexing · hybrid retrieval with
+a tunable fusion weight · answers cited to document and page · admin dashboard
+with query logs and system stats · JWT-protected admin API · a retrieval
+evaluation harness (below).
 
-✅ Step 8: Technologies Used (Optional)
-## 🛠️ Technologies Used
+---
 
-### Backend
-- FastAPI
-- SQLModel + SQLite
-- FAISS
-- Sentence Transformers
-- Transformers + PEFT (LoRA)
-- PyMuPDF
+## Retrieval evaluation
 
-### Frontend
-- Next.js (App Router)
-- Tailwind CSS
-- PDF.js
+Answer quality is subjective; retrieval quality is not. If the right chunk never
+reaches the context window, no amount of prompt engineering saves the answer —
+so this is the part worth measuring.
 
-✅ Step 9: License Information (Optional)
-## 📄 License
+`eval/eval_dataset.json` is a **hand-labelled query set**: 25 questions written
+against the indexed corpus, each mapped to the chunk id(s) that actually contain
+the answer. `eval/rag_eval.py` scores the retriever against it using standard IR
+metrics — precision@k, recall@k, MRR@10, hit rate@k and R-precision.
 
-This project is licensed under the MIT License.
+```bash
+python eval/rag_eval.py --mode bm25         # lexical baseline
+python eval/rag_eval.py --mode semantic     # dense only
+python eval/rag_eval.py --mode hybrid       # all three, side by side
+python eval/rag_eval.py --sweep-alpha       # find the best fusion weight
+```
 
+### Results
 
-(Only include this if you actually add an MIT LICENSE file.)
+Corpus: 49 chunks from a 17-page HR policy document. 25 hand-labelled queries.
 
-✅ Step 10: Support Information (Optional)
-## 💬 Support
+| Retriever | MRR@10 | Recall@5 | Hit rate@3 | Precision@1 |
+|---|---|---|---|---|
+| BM25 (lexical only) | 0.843 | 0.860 | **0.880** | **0.800** |
+| Dense only (BGE) | 0.818 | **0.980** | 0.840 | 0.720 |
+| Hybrid (α = 0.6) | **0.847** | 0.940 | **0.880** | 0.760 |
 
-If you have questions about:
-- RAG system design
-- Hybrid retrieval
-- FAISS indexing
-- Evaluation strategies
+Sweeping the fusion weight puts the optimum at **α = 0.4** (MRR@10 **0.857**), so
+hybrid does beat BM25 alone — but by 0.014 MRR@10 at the best α and 0.004 at the
+shipped α = 0.6, a margin worth far less than the +0.080 Recall@5 it also buys,
+and one that 25 queries cannot meaningfully separate from noise.
 
-Feel free to open an issue or reach out via LinkedIn.
+**What the baseline already tells us.** BM25 alone reaches 0.843 MRR@10 on this
+corpus. That is high, and it is not an accident: HR policy questions are
+keyword-heavy ("maternity leave", "probation period", "bike allowance"), the
+vocabulary in the question closely matches the vocabulary in the document, and
+the corpus is small. Lexical search is well suited to exactly this shape of
+problem.
+
+That reframes the question the hybrid design has to answer. It is not "does
+adding dense retrieval help?" but **"does it help enough to justify loading a
+440MB encoder and paying embedding latency on every query?"** The α sweep exists
+to answer that with numbers rather than assumption. Where dense retrieval should
+earn its place is on paraphrased questions that share no vocabulary with the
+source text — so the honest next step is to extend the query set with
+deliberately paraphrased questions and see whether the gap opens up.
+
+---
+
+## Getting started
+
+```bash
+# Backend
+python -m venv venv && source venv/bin/activate
+pip install -r requirements.txt
+uvicorn app.main:app --reload --port 8000     # from backend/
+
+# Frontend
+cd policy-frontend && npm install && npm run dev
+```
+
+---
+
+## Notes on the generation layer
+
+`services/lora_loader.py` loads a LoRA adapter over a base model via `peft`.
+This was **a deliberate learning exercise, not a production choice**: the base
+model is GPT-2, and the goal was to understand adapter training hands-on —
+rank, target modules, how the adapter merges at inference. A production
+deployment of this system would use an instruct-tuned model for generation; the
+adapter path is kept because the experiment is part of what the project is for.
+
+## Known limitations
+
+- Fusion normalises each retriever's scores min-max **within the top-k slice**,
+  so the top hit always maps to 1.0 and the bottom to 0.0. This distorts the
+  weighted sum when one retriever is confident and the other is not; a rank-based
+  fusion such as RRF would be more stable.
+- The query set is small (25 queries, one document). Numbers are directional.
+- No re-ranker. A cross-encoder over the top-20 is the obvious next improvement.
+- Evaluation covers retrieval only, not answer faithfulness.
