@@ -1,0 +1,44 @@
+{
+  "semantic": {
+    "precision@1": 0.72,
+    "precision@3": 0.33333333333333326,
+    "precision@5": 0.2320000000000001,
+    "recall@1": 0.62,
+    "recall@3": 0.82,
+    "recall@5": 0.98,
+    "recall@10": 0.98,
+    "mrr@10": 0.818,
+    "hit_rate@1": 0.72,
+    "hit_rate@3": 0.84,
+    "hit_rate@5": 1.0,
+    "r_precision": 0.66
+  },
+  "bm25": {
+    "precision@1": 0.8,
+    "precision@3": 0.3066666666666666,
+    "precision@5": 0.20000000000000007,
+    "recall@1": 0.72,
+    "recall@3": 0.8,
+    "recall@5": 0.86,
+    "recall@10": 0.88,
+    "mrr@10": 0.8433333333333333,
+    "hit_rate@1": 0.8,
+    "hit_rate@3": 0.88,
+    "hit_rate@5": 0.92,
+    "r_precision": 0.74
+  },
+  "hybrid (alpha=0.6)": {
+    "precision@1": 0.76,
+    "precision@3": 0.3466666666666666,
+    "precision@5": 0.2240000000000001,
+    "recall@1": 0.66,
+    "recall@3": 0.86,
+    "recall@5": 0.94,
+    "recall@10": 0.98,
+    "mrr@10": 0.8466666666666666,
+    "hit_rate@1": 0.76,
+    "hit_rate@3": 0.88,
+    "hit_rate@5": 0.96,
+    "r_precision": 0.7
+  }
+}

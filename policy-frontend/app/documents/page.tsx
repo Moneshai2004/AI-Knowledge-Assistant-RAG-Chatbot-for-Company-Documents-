@@ -1,11 +1,11 @@
 "use client";
 
-import { useMemo, useState, useEffect } from "react";
+import { Suspense, useMemo, useState, useEffect } from "react";
 import { useSearchParams } from "next/navigation";
 import DocumentList, { DocumentMeta } from "@/components/DocumentList";
 import PdfJSViewer from "@/components/PdfJSViewer";
 
-export default function DocumentsPage() {
+function DocumentsView() {
   const [documents, setDocuments] = useState<DocumentMeta[]>([]);
   const [selectedId, setSelectedId] = useState<string | undefined>();
 
@@ -66,5 +66,16 @@ export default function DocumentsPage() {
         </section>
       </div>
     </main>
+  );
+}
+
+// useSearchParams() opts the tree into client-side rendering, so Next requires
+// it to sit under a Suspense boundary — without one the /documents route cannot
+// be prerendered and `next build` fails.
+export default function DocumentsPage() {
+  return (
+    <Suspense fallback={<main className="h-[calc(100vh-2rem)] w-full px-4 py-4 md:px-8" />}>
+      <DocumentsView />
+    </Suspense>
   );
 }

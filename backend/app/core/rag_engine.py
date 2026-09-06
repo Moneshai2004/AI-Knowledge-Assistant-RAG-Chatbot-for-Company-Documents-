@@ -446,10 +446,15 @@ def hybrid_search_legacy(query: str, top_k: int = 5, alpha: float = 0.6,
     index = load_faiss_index()
     bm25 = BM25Okapi(token_lists) if token_lists else None
 
-    model = get_model(device=model_device) if model_device is not None else get_model()
-    q_emb = model.encode([query], normalize_embeddings=True, convert_to_numpy=True).astype("float32")
+    # Only pay for the embedding model when the dense score actually contributes.
+    # alpha == 0.0 is pure BM25, so loading a ~440MB encoder there is wasted work.
+    if alpha > 0.0:
+        model = get_model(device=model_device) if model_device is not None else get_model()
+        q_emb = model.encode([query], normalize_embeddings=True, convert_to_numpy=True).astype("float32")
+    else:
+        q_emb = None
 
-    if index.ntotal == 0:
+    if q_emb is None or index.ntotal == 0:
         sem_idxs = []
         sem_scores_map = {}
     else:
