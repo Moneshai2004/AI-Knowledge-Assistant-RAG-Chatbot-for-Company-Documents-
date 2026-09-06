@@ -1,7 +1,13 @@
 import type { NextConfig } from "next";
 
 const nextConfig: NextConfig = {
-  /* config options here */
+  turbopack: {
+    resolveAlias: {
+      // See empty-module.ts — keeps pdfjs-dist's Node-only `canvas` require
+      // out of the browser bundle.
+      canvas: "./empty-module.ts",
+    },
+  },
 };
 
 export default nextConfig;
